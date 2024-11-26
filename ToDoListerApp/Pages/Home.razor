@@ -1,5 +1,11 @@
 ﻿@page "/"
 @page "/index.html"
+@using ToDoListerApp.Core.Features.AddToDoTask
+@using ToDoListerApp.Core.Logic
+
+@inject ToDoManager ToDoManager
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
 
 <PageTitle>ToDo Lister</PageTitle>
 <HeadContent>
@@ -8,12 +14,133 @@
     <meta name="robots" content="index, follow" />
 </HeadContent>
 
-<FluentHeader Style="background-color:#FF0000;">
+<FluentHeader>
     ToDo Lister
 </FluentHeader>
 
-<main>
-<h1>Hello, world!</h1>
+<FluentCard MinimalStyle="true" Style="width:600px;margin:25px auto;">
+    <h3>@ToDoManager.GetCompletionString()</h3>
+    @if(!printMode)
+    {
+        <FluentStack Orientation="Orientation.Horizontal" HorizontalGap="15" VerticalAlignment="VerticalAlignment.Bottom">
+            <FluentStack Orientation="Orientation.Vertical" Style="width:200px;">
+                <FluentTextField @ref=@inputfield Label="Enter a Task:" Style="width:100%;" @bind-Value=@taskName @onkeyup=@HandleTaskFieldKeyUp />
+            </FluentStack>
+            <FluentButton OnClick=@AddTask>Create Task</FluentButton>
+            <FluentButton OnClick=@DoPrint>Print Task List</FluentButton>
+        </FluentStack>
+        <FluentCheckbox Style="margin-top:10px;" @oncheckedchange=@ToggleCompleted Label="Hide Completed Tasks" />
+        <FluentDivider Style="width:100%;margin:15px 0;" Orientation="Orientation.Horizontal" Role="DividerRole.Separator"/>
+    }
+    <FluentDataGrid Items=@taskList Style="width:100%;">
+        <TemplateColumn Title="Task" SortBy=@sortByTaskName Sortable="true">
+            @if(context.Complete)
+            {  
+                <strike>@context.Task</strike>
+            }
+            else
+            {
+                @context.Task
+            }
+        </TemplateColumn>
+        @if(!printMode)
+        {
+            <TemplateColumn Title="Actions">
+                <FluentButton @onclick=@(() => ToggleTaskComplete(context))>Complete</FluentButton>
+                <FluentButton @onclick=@(() => DeleteTask(context))>Delete</FluentButton>
+            </TemplateColumn>
+        }
+    </FluentDataGrid>
+</FluentCard>
 
-Welcome to your new app.
-</main>
+@code {
+    private bool printMode = false;
+    private bool hideCompleted = false;
+    private string taskName = string.Empty;
+    private FluentTextField? inputfield;
+    private IQueryable<TaskItem> taskList;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshTaskList();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            ReturnToInput();
+        }
+    }
+
+    private void ReturnToInput() =>
+        inputfield?.FocusAsync();
+
+    private async Task AddTask()
+    {
+        await ToDoManager.AddTaskAsync(taskName);
+        taskName = string.Empty;
+        await RefreshTaskList();
+    }
+
+    private async Task RefreshTaskList() =>
+        taskList = (await ToDoManager.GetItemsAsync()).AsQueryable();
+
+    private async Task ToggleTaskComplete(TaskItem item) =>
+        await ToDoManager.ToggleComplete(item.Id);
+
+    private async Task DeleteTask(TaskItem item)
+    {
+        if(await ConfirmDelete())
+        {
+            await ToDoManager.DeleteTaskAsync(item.Id);
+            await RefreshTaskList();
+        }
+    }
+
+    private async Task<bool> ConfirmDelete()
+    {
+        var dialog = await DialogService.ShowConfirmationAsync("Delete the selected Task?");
+        var result = await dialog.Result;
+        return result.Cancelled == false;
+    }
+
+    private GridSort<TaskItem> sortByTaskName = GridSort<TaskItem>
+        .ByAscending(x => x.Task);
+
+    private async Task DoPrint()
+    {
+        await TogglePrintMode();
+        await JSRuntime.InvokeVoidAsync("blazorHelpers.Print");
+        await TogglePrintMode();
+    }
+
+    private async Task TogglePrintMode()
+    {
+        printMode = !printMode;
+        StateHasChanged();
+        await Task.Yield();
+    }
+
+    private async Task ToggleCompleted()
+    {
+        hideCompleted = !hideCompleted;
+        if(hideCompleted)
+        {
+            taskList = taskList.Where(x => x.Complete == false);
+        }
+        else
+        {
+            await RefreshTaskList();
+        }
+        StateHasChanged();
+    }
+
+    private async Task HandleTaskFieldKeyUp(KeyboardEventArgs eventArgs)
+    {
+        if(eventArgs.Key == "Enter")
+        {
+            await AddTask();
+        }
+    }
+}
